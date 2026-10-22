@@ -1,0 +1,72 @@
+import re
+
+import pandas as pd
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+
+from faq_data import FAQ_DATA
+
+
+CONFIDENCE_THRESHOLD = 0.30
+FALLBACK_RESPONSE = (
+    "I could not find a confident answer. Please try asking your question in a different way."
+)
+FALLBACK_STATUS = "No confident FAQ match found"
+
+
+def clean_text(text):
+    """Clean text before matching it with stored FAQ questions."""
+    text = text.lower()
+    text = re.sub(r"[^a-z0-9\s]", " ", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+faq_df = pd.DataFrame(FAQ_DATA)
+faq_df["clean_question"] = faq_df["question"].apply(clean_text)
+
+vectorizer = TfidfVectorizer(stop_words="english")
+faq_vectors = vectorizer.fit_transform(faq_df["clean_question"])
+
+
+def get_bot_response(user_question):
+    """Return the best FAQ response for a user question."""
+    cleaned_question = clean_text(user_question)
+
+    if not cleaned_question:
+        return {
+            "answer": FALLBACK_RESPONSE,
+            "matched_question": None,
+            "category": None,
+            "confidence_score": 0.0,
+            "is_confident": False,
+            "status": FALLBACK_STATUS,
+        }
+
+    user_vector = vectorizer.transform([cleaned_question])
+    similarity_scores = cosine_similarity(user_vector, faq_vectors).flatten()
+
+    best_match_index = similarity_scores.argmax()
+    best_score = float(similarity_scores[best_match_index])
+    is_confident = best_score >= CONFIDENCE_THRESHOLD
+
+    if not is_confident:
+        return {
+            "answer": FALLBACK_RESPONSE,
+            "matched_question": None,
+            "category": None,
+            "confidence_score": round(best_score, 2),
+            "is_confident": False,
+            "status": FALLBACK_STATUS,
+        }
+
+    matched_faq = faq_df.iloc[best_match_index]
+
+    return {
+        "answer": matched_faq["answer"],
+        "matched_question": matched_faq["question"],
+        "category": matched_faq["category"],
+        "confidence_score": round(best_score, 2),
+        "is_confident": True,
+        "status": "Confident answer",
+    }
